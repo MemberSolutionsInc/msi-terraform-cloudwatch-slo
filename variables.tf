@@ -33,7 +33,7 @@ variable "goal_period_days" {
     separate threshold input to keep in sync by hand.
   EOT
   type        = number
-  default     = 30
+  default     = 7
 }
 
 variable "sns_topic_arns" {
