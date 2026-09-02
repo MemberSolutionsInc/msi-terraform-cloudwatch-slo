@@ -27,9 +27,11 @@ locals {
 
   # burn_rate = consumption_fraction / (window_days / goal_period_days)
   #           = consumption_fraction * goal_period_days / window_days
-  # e.g. the fast tier at the default 30-day goal:
-  # 0.02 * 30 / (60/1440) = 14.4 - matches the Google SRE Workbook's
-  # canonical "page immediately" burn-rate value for a 1-hour window.
+  # e.g. the fast tier at the default 7-day goal:
+  # 0.02 * 7 / (60/1440) = 3.36. (At the Workbook's own 30-day reference
+  # goal this same formula gives 14.4, its canonical "page immediately"
+  # value for a 1-hour window - the ratio holds, only the goal period
+  # differs from the Workbook's example.)
   burn_rate_thresholds = {
     for tier, cfg in local.burn_rate_tiers :
     tier => cfg.consumption_fraction * var.goal_period_days / (cfg.window_minutes / 1440)

@@ -26,14 +26,17 @@ variable "slos" {
 variable "goal_period_days" {
   description = <<-EOT
     Rolling SLO evaluation window, in days, applied to every SLO in this
-    module invocation. Burn-rate alarm thresholds in locals.tf are
-    DERIVED from this value (burn_rate = consumption_fraction *
-    goal_period_days / window_days), so changing it recalculates the
-    alarm thresholds correctly instead of leaving them stale - there's no
-    separate threshold input to keep in sync by hand.
+    module invocation. Defaults to 7, not the 30 days the classic Google
+    SRE Workbook / AWS Application Signals reference examples use -
+    MemberSolutions' own convention for these SLOs. Burn-rate alarm
+    thresholds in locals.tf are DERIVED from this value (burn_rate =
+    consumption_fraction * goal_period_days / window_days), so changing
+    it recalculates the alarm thresholds correctly instead of leaving
+    them stale - there's no separate threshold input to keep in sync by
+    hand.
   EOT
   type        = number
-  default     = 30
+  default     = 7
 }
 
 variable "sns_topic_arns" {

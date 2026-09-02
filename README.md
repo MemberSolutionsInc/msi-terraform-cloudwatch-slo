@@ -7,7 +7,7 @@ metric that's meaningfully binary per period.
 ## Purpose
 
 Gives a canary (or any CloudWatch metric) a real error-budget-based SLO -
-"99.9% of periods over a rolling 30 days" - instead of just a flat
+"99.9% of periods over a rolling 7 days" by default - instead of just a flat
 threshold alarm, plus the industry-standard **multi-window multi-burn-rate**
 alerting pattern (Google SRE Workbook, "Alerting on SLOs" - the same
 reference AWS's own Application Signals team cites) so a short sharp outage
@@ -36,7 +36,7 @@ This module creates:
 
 ```hcl
 module "canary_slos" {
-  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-slo.git?ref=v0.1.0"
+  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-slo.git?ref=v0.2.0"
 
   slos = {
     api-heartbeat = {
@@ -46,6 +46,9 @@ module "canary_slos" {
       # attainment_goal_percent defaults to 99.9
     }
   }
+
+  # goal_period_days defaults to 7 - pass it explicitly here only if this
+  # invocation needs a different rolling window than the rest of the org.
 
   sns_topic_arns = {
     critical = "arn:aws:sns:us-east-1:123456789012:aws-cw-critical"
@@ -59,8 +62,9 @@ module "canary_slos" {
 
 ## The burn-rate math
 
-`goal_period_days` (default 30) is the rolling window the SLO's
-`attainment_goal` is measured against. The three alarm thresholds are
+`goal_period_days` (default 7 - MemberSolutions' own convention, not the 30
+days the Workbook's own reference examples use) is the rolling window the
+SLO's `attainment_goal` is measured against. The three alarm thresholds are
 *derived* from it, not hardcoded, so changing `goal_period_days` recalculates
 them correctly:
 
@@ -68,17 +72,19 @@ them correctly:
 burn_rate = consumption_fraction * goal_period_days / window_days
 ```
 
-| Tier   | Window | Consumption | Threshold @ 30-day goal | Severity |
-|--------|--------|-------------|--------------------------|----------|
-| fast   | 1h     | 2%          | 14.4x                    | critical |
-| medium | 6h     | 5%          | 6x                       | warning  |
-| slow   | 3d     | 10%         | 1x                       | info     |
+| Tier   | Window | Consumption | Threshold @ 7-day goal (default) | Threshold @ 30-day goal | Severity |
+|--------|--------|-------------|-----------------------------------|--------------------------|----------|
+| fast   | 1h     | 2%          | 3.36x                              | 14.4x                    | critical |
+| medium | 6h     | 5%          | 1.4x                               | 6x                       | warning  |
+| slow   | 3d     | 10%         | 0.23x                              | 1x                       | info     |
 
 A burn rate of 1x means "consuming the error budget at exactly the rate
 that exhausts it right as the goal period ends." The fast tier catches a
-sharp outage fast (2% of a 30-day budget in 1 hour is a real incident); the
-slow tier catches a gradual decline that never looks urgent on its own but
-adds up.
+sharp outage fast (2% of the budget in 1 hour is a real incident, regardless
+of the goal period); the slow tier catches a gradual decline that never
+looks urgent on its own but adds up. The 30-day column is the Google SRE
+Workbook's own canonical reference numbers (14.4/6/1), included here so you
+can sanity-check the formula against the source it's built from.
 
 ## Fit and limits
 
