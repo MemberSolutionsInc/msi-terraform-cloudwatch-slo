@@ -21,16 +21,24 @@ variable "slos" {
     sli_period_seconds      = optional(number, 300)
     description             = optional(string)
   }))
+
+  # The alarm tiers in locals.tf are tuned in 5-minute periods - e.g. the
+  # fast tier's "2 bad in a 10-minute window" only means "2 consecutive
+  # failures" at 300s. Revisit those tiers before relaxing this.
+  validation {
+    condition     = alltrue([for s in values(var.slos) : s.sli_period_seconds == 300])
+    error_message = "sli_period_seconds must be 300: the burn-rate alarm tiers in locals.tf are tuned for 5-minute SLI periods."
+  }
 }
 
 variable "goal_period_days" {
   description = <<-EOT
     Rolling SLO evaluation window, in days, applied to every SLO in this
-    module invocation. Burn-rate alarm thresholds in locals.tf are
-    DERIVED from this value (burn_rate = consumption_fraction *
-    goal_period_days / window_days), so changing it recalculates the
-    alarm thresholds correctly instead of leaving them stale - there's no
-    separate threshold input to keep in sync by hand.
+    module invocation. Since v0.3.0 the burn-rate alarm tiers in
+    locals.tf are stated as "N failed SLI periods within a look-back
+    window" - converted to BurnRate thresholds per SLO from its
+    attainment_goal_percent and sli_period_seconds - so this only sets
+    the SLO's attainment window, not the alarm thresholds.
   EOT
   type        = number
   default     = 7

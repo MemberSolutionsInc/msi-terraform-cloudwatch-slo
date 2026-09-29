@@ -73,44 +73,57 @@ resource "awscc_applicationsignals_service_level_objective" "this" {
   }
 
   burn_rate_configurations = [
-    for tier, cfg in local.burn_rate_tiers : { look_back_window_minutes = cfg.window_minutes }
+    for w in local.burn_rate_windows : { look_back_window_minutes = w }
   ]
 
   tags = [for k, v in var.tags : { key = k, value = v }]
 }
 
 # ---------------------------------------------------------------------------
-# Burn-rate alarms - one per SLO per tier (fast/medium/slow), watching the
-# AWS/ApplicationSignals BurnRate metric each SLO's burn_rate_configurations
-# above causes AWS to publish. A burn rate of exactly 1 means "on pace to
-# exhaust the error budget right as the goal period ends"; the thresholds
-# in locals.tf trigger well before that, scaled per window so a short,
-# sharp outage and a long, slow degradation both get caught without either
-# one drowning out the other.
+# Burn-rate alarms - one per SLO per tier (fast/medium/slow). Each is a
+# metric-math alarm over the AWS/ApplicationSignals BurnRate series the
+# SLO's burn_rate_configurations above cause AWS to publish (one series
+# per look-back window), combining a long and a short window per the
+# tier's clauses in locals.tf. The expression evaluates to 1 when the
+# tier's condition holds and 0 otherwise.
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "burn_rate" {
   for_each = local.slo_burn_rate_alarms
 
   alarm_name          = "slo-${each.value.slo_name}-burn_rate-${each.value.tier}"
-  alarm_description   = "${each.value.slo_name} is burning its error budget at ${format("%.1f", each.value.threshold)}x or faster over the last ${each.value.window_minutes} minutes (${each.value.tier}-burn tier)."
-  comparison_operator = "GreaterThanThreshold"
-  threshold           = each.value.threshold
+  alarm_description   = "${each.value.slo_name} canary SLO (${each.value.tier}-burn tier): ${each.value.summary}."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
 
-  namespace   = "AWS/ApplicationSignals"
-  metric_name = "BurnRate"
-  statistic   = "Maximum"
+  # ALARM on the first breaching 5-minute evaluation; OK only after
+  # hold_periods consecutive clean ones (see locals.tf).
+  evaluation_periods  = each.value.hold_periods
+  datapoints_to_alarm = 1
 
-  # Matches the AWS Application Signals team's own published example
-  # (the Amazon Search team's SLO alarming blog): 5-minute granularity,
-  # evaluated across 3 periods.
-  period              = 300
-  evaluation_periods  = 3
-  datapoints_to_alarm = 3
+  metric_query {
+    id          = "breach"
+    label       = "${each.value.tier}-burn condition (1 = breaching)"
+    expression  = each.value.expression
+    return_data = true
+  }
 
-  dimensions = {
-    SloName               = each.value.slo_name
-    BurnRateWindowMinutes = tostring(each.value.window_minutes)
+  dynamic "metric_query" {
+    for_each = each.value.windows
+    content {
+      id = "w${metric_query.value}"
+
+      metric {
+        namespace   = "AWS/ApplicationSignals"
+        metric_name = "BurnRate"
+        period      = 300
+        stat        = "Maximum"
+        dimensions = {
+          SloName               = each.value.slo_name
+          BurnRateWindowMinutes = tostring(metric_query.value)
+        }
+      }
+    }
   }
 
   # No burn-rate data usually just means too few underlying SLI periods
