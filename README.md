@@ -26,17 +26,18 @@ Control already supports.
 This module creates:
 - One `awscc_applicationsignals_service_level_objective` per entry in `slos`
   - a period-based SLO with a binary per-period SLI (`metric >= 100`).
-- Three `aws_cloudwatch_metric_alarm` resources per SLO, watching the
-  `AWS/ApplicationSignals` `BurnRate` metric each SLO publishes, at three
-  look-back windows: 1h/critical, 6h/warning, 3d/info. The SLO resource
-  itself only tracks and reports - it doesn't alert on its own, which is
-  what these alarms are for.
+- Three `aws_cloudwatch_metric_alarm` resources per SLO (fast/critical,
+  medium/warning, slow/info) - metric-math alarms that combine a long and
+  a short look-back window of the `AWS/ApplicationSignals` `BurnRate`
+  metric each SLO publishes. The SLO resource itself only tracks and
+  reports - it doesn't alert on its own, which is what these alarms are
+  for.
 
 ## Usage
 
 ```hcl
 module "canary_slos" {
-  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-slo.git?ref=v0.1.0"
+  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-slo.git?ref=v0.3.0"
 
   slos = {
     api-heartbeat = {
@@ -57,28 +58,45 @@ module "canary_slos" {
 }
 ```
 
-## The burn-rate math
+## The alarm tiers
 
-`goal_period_days` (default 30) is the rolling window the SLO's
-`attainment_goal` is measured against. The three alarm thresholds are
-*derived* from it, not hardcoded, so changing `goal_period_days` recalculates
-them correctly:
+`goal_period_days` (default 7) is the rolling window the SLO's
+`attainment_goal` is measured against. The alarm tiers are stated as
+**failed SLI periods within a look-back window**, and converted per SLO to
+`BurnRate` thresholds:
 
 ```
-burn_rate = consumption_fraction * goal_period_days / window_days
+burn_rate = (bad_periods / periods_in_window) / (1 - goal)
 ```
 
-| Tier   | Window | Consumption | Threshold @ 30-day goal | Severity |
-|--------|--------|-------------|--------------------------|----------|
-| fast   | 1h     | 2%          | 14.4x                    | critical |
-| medium | 6h     | 5%          | 6x                       | warning  |
-| slow   | 3d     | 10%         | 1x                       | info     |
+| Tier   | Fires when                                                                 | Holds before OK | Severity |
+|--------|----------------------------------------------------------------------------|-----------------|----------|
+| fast   | 2 consecutive failed periods, **or** >=4 failed in 1h with one in the last 15m | 60 min          | critical |
+| medium | >=3 failed in 6h with one in the last 2h                                   | 10 min          | warning  |
+| slow   | >=3 failed in 3d with one in the last 6h                                   | 5 min           | info     |
 
-A burn rate of 1x means "consuming the error budget at exactly the rate
-that exhausts it right as the goal period ends." The fast tier catches a
-sharp outage fast (2% of a 30-day budget in 1 hour is a real incident); the
-slow tier catches a gradual decline that never looks urgent on its own but
-adds up.
+A single isolated failed run fires nothing.
+
+### Why counts, not budget fractions (changed in v0.3.0)
+
+Up to v0.2.0 the thresholds were the Google SRE Workbook budget fractions
+(1h/2%, 6h/5%, 3d/10%). That table assumes lots of events per window. A
+canary gives one 5-minute sample at a time, and at 99.9% over 7 days the
+whole error budget is ~2 bad periods. `BurnRate` moves in whole bad
+periods: one bad period reads 83.3 in the 1h window, 13.9 in 6h and 1.16 in
+3d, while the thresholds were 3.36 / 1.4 / 0.23. So a single transient
+failure paged critical for 50 minutes, warning for ~6 hours and kept info
+in ALARM for 3 days. In ms-production that was every alarm raised by
+`mm-api` in September 2026 (6 blips, 0 real incidents).
+
+Each tier pairs a long window (the problem is real) with a short window
+(it is still happening), following the Workbook's multi-window pattern, so
+alarms reset soon after recovery. `hold_periods` (evaluation periods with
+`datapoints_to_alarm = 1`) adds hysteresis so an intermittent failure
+pattern stays in ALARM instead of flapping. The tiers were tuned by
+replaying 27 days of ms-production canary data plus synthetic
+periodic/random failure patterns. The real 2026-09-04 outage (16-21
+consecutive failures) still paged about 10 minutes after onset.
 
 ## Fit and limits
 
@@ -93,6 +111,9 @@ adds up.
   in it, since the burn-rate thresholds are derived from it account-wide.
   Give SLOs that need a different rolling window their own module
   invocation.
+- **5-minute SLI periods only.** `sli_period_seconds` is validated to 300,
+  because the tiers are tuned in 5-minute periods (e.g. "2 bad in a
+  10-minute window" means "2 consecutive failures" only at 300s).
 - **Low-volume metrics.** AWS's own guidance on burn-rate alerting warns
   that burn rate gets noisy with too few underlying data points in the
   look-back window. A canary running every 5 minutes only has ~12
