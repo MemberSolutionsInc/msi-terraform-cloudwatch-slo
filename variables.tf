@@ -58,3 +58,50 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "tier_hold_periods" {
+  description = <<-EOT
+    Optional per-tier override of how many consecutive clean 5-minute
+    evaluations a burn-rate alarm needs before it returns to OK (the
+    alarm's evaluation_periods, with datapoints_to_alarm = 1). Unset
+    tiers use the defaults in locals.tf (fast 12, medium 6, slow 12).
+    This only changes how long an alarm stays in ALARM after the
+    condition clears; it never delays detection. Each value must be
+    1-288 (CloudWatch caps evaluation_periods x period at 24 hours).
+  EOT
+  type = object({
+    fast   = optional(number)
+    medium = optional(number)
+    slow   = optional(number)
+  })
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for v in values(var.tier_hold_periods) : v == null ? true : (v >= 1 && v <= 288 && v == floor(v))
+    ])
+    error_message = "tier_hold_periods values must be whole numbers between 1 and 288."
+  }
+}
+
+variable "notify_on_ok_severities" {
+  description = <<-EOT
+    Severities whose burn-rate alarms also notify when they return to OK.
+    Recovery messages matter for critical and warning (they close the
+    loop on a page); for the info tier they are pure chat noise, so it is
+    excluded by default. Add "info" to restore v0.3.0 behaviour.
+  EOT
+  type        = list(string)
+  default     = ["critical", "warning"]
+
+  validation {
+    condition     = alltrue([for s in var.notify_on_ok_severities : contains(["critical", "warning", "info"], s)])
+    error_message = "notify_on_ok_severities may only contain critical, warning and info."
+  }
+}
+
+variable "runbook_url" {
+  description = "Optional runbook/dashboard URL appended to every burn-rate alarm description so the notification links straight to triage steps."
+  type        = string
+  default     = null
+}
