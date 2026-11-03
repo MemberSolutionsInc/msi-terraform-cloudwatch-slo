@@ -37,7 +37,7 @@ This module creates:
 
 ```hcl
 module "canary_slos" {
-  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-slo.git?ref=v0.3.0"
+  source = "git::https://github.com/MemberSolutionsInc/msi-terraform-cloudwatch-slo.git?ref=v0.4.0"
 
   slos = {
     api-heartbeat = {
@@ -72,10 +72,30 @@ burn_rate = (bad_periods / periods_in_window) / (1 - goal)
 | Tier   | Fires when                                                                 | Holds before OK | Severity |
 |--------|----------------------------------------------------------------------------|-----------------|----------|
 | fast   | 2 consecutive failed periods, **or** >=4 failed in 1h with one in the last 15m | 60 min          | critical |
-| medium | >=3 failed in 6h with one in the last 2h                                   | 10 min          | warning  |
-| slow   | >=3 failed in 3d with one in the last 6h                                   | 5 min           | info     |
+| medium | >=3 failed in 6h with one in the last 2h                                   | 30 min          | warning  |
+| slow   | >=3 failed in 3d with one in the last 6h                                   | 60 min          | info     |
 
 A single isolated failed run fires nothing.
+
+### Changes in v0.4.0 (noise reduction, detection unchanged)
+
+- **Slow tier `hold_periods` 1 to 12, medium 2 to 6.** With a hold of 1 the
+  slow alarm reset on any evaluation that saw no fresh `BurnRate`
+  datapoint and re-fired on the next, giving about 72 pages per failure
+  (1,447 of 1,490 SLO pages in the 2026-10 audit). The alarm conditions and
+  look-back windows are untouched, so the same failures are detected at the
+  same time; each episode now pages once.
+- **`tier_hold_periods`** (optional) overrides the hold per tier.
+- **`notify_on_ok_severities`** (default critical and warning): the info
+  tier no longer posts a recovery message. Set to
+  `["critical", "warning", "info"]` for the old behaviour.
+- **`runbook_url`** (optional) is appended to every alarm description.
+- Alarms gain `slo`, `tier` and `severity` tags. Alarm names, SLO
+  resources and burn-rate windows are unchanged, so the upgrade is an
+  in-place update with no replacement.
+
+Not changed on purpose: the fast tier still pages critical on two
+consecutive failed canary runs, which is the standard "hard down" signal.
 
 ### Why counts, not budget fractions (changed in v0.3.0)
 

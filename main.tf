@@ -92,12 +92,13 @@ resource "aws_cloudwatch_metric_alarm" "burn_rate" {
   for_each = local.slo_burn_rate_alarms
 
   alarm_name          = "slo-${each.value.slo_name}-burn_rate-${each.value.tier}"
-  alarm_description   = "${each.value.slo_name} canary SLO (${each.value.tier}-burn tier): ${each.value.summary}."
+  alarm_description   = "${each.value.slo_name} canary SLO (${each.value.tier}-burn tier): ${each.value.summary}.${var.runbook_url == null ? "" : " Runbook: ${var.runbook_url}"}"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   threshold           = 1
 
   # ALARM on the first breaching 5-minute evaluation; OK only after
-  # hold_periods consecutive clean ones (see locals.tf).
+  # hold_periods consecutive clean ones (see locals.tf for why the slow
+  # tier needs a long hold).
   evaluation_periods  = each.value.hold_periods
   datapoints_to_alarm = 1
 
@@ -132,9 +133,14 @@ resource "aws_cloudwatch_metric_alarm" "burn_rate" {
   treat_missing_data = "notBreaching"
 
   alarm_actions = [var.sns_topic_arns[each.value.severity]]
-  ok_actions    = [var.sns_topic_arns[each.value.severity]]
+  ok_actions    = contains(var.notify_on_ok_severities, each.value.severity) ? [var.sns_topic_arns[each.value.severity]] : []
 
-  tags = merge(var.tags, { Name = "slo-${each.value.slo_name}-burn_rate-${each.value.tier}" })
+  tags = merge(var.tags, {
+    Name     = "slo-${each.value.slo_name}-burn_rate-${each.value.tier}"
+    slo      = each.value.slo_name
+    tier     = each.value.tier
+    severity = each.value.severity
+  })
 
   depends_on = [awscc_applicationsignals_service_level_objective.this]
 }

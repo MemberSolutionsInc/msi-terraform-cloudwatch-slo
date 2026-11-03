@@ -27,6 +27,17 @@ locals {
   # hysteresis is what stops an intermittent failure pattern from
   # flapping the alarm OK <-> ALARM.
   #
+  # v0.4.0: the BurnRate series is published once per SLI period but the
+  # alarm is evaluated every minute, and a tier's metric-math expression
+  # goes through FILL(..., 0). With hold_periods = 1 the slow tier
+  # therefore dropped out of ALARM on any evaluation that saw no fresh
+  # datapoint, and re-entered on the next one - 1 page per 5 minutes for
+  # the 6 hours a single failure stays inside the short window (~72
+  # pages per failure; 1,447 of 1,490 SLO pages in the 2026-10 audit).
+  # Detection is unchanged: hold_periods only decides how long a tier must
+  # be clean before it resets. Slow is now 12 (60 min) and medium 6
+  # (30 min); both can be overridden per call via var.tier_hold_periods.
+  #
   # Tuned by replaying ms-production's 12 canaries (2026-09-02 ..
   # 2026-09-28) plus synthetic periodic/random intermittent failure
   # patterns: zero alarms from the 10 isolated single-run blips in that
@@ -44,7 +55,7 @@ locals {
     }
     medium = {
       severity     = "warning"
-      hold_periods = 2
+      hold_periods = 6 # 30 min before OK
       summary      = "sustained degradation: >=3 failed periods in the last 6 hours with one in the last 2 hours"
       clauses = [
         [{ window_minutes = 360, min_bad = 3 }, { window_minutes = 120, min_bad = 1 }],
@@ -52,7 +63,7 @@ locals {
     }
     slow = {
       severity     = "info"
-      hold_periods = 1
+      hold_periods = 12 # 60 min before OK - one page per erosion episode, not one per 5 minutes
       summary      = "slow erosion: >=3 failed periods in the last 3 days with one in the last 6 hours"
       clauses = [
         [{ window_minutes = 4320, min_bad = 3 }, { window_minutes = 360, min_bad = 1 }],
@@ -86,7 +97,7 @@ locals {
         slo_name     = slo_name
         tier         = tier
         severity     = cfg.severity
-        hold_periods = cfg.hold_periods
+        hold_periods = var.tier_hold_periods[tier] != null ? var.tier_hold_periods[tier] : cfg.hold_periods
         summary      = cfg.summary
         windows      = distinct(flatten([for clause in cfg.clauses : [for term in clause : term.window_minutes]]))
         expression = join(" OR ", [
